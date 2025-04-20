@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { Task, Habit, ProgressEvent, Goal, BrainDumpItem, Milestone } from '../types';
 import { Link, useNavigate } from 'react-router-dom';
-import { FlagIcon, ClipboardIcon, SparklesIcon, ClockIcon, CheckCircleIcon, PlusIcon, CheckIcon, InboxIcon, TrashIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
+import { FlagIcon, ClipboardIcon, SparklesIcon, ClockIcon, CheckCircleIcon, PlusIcon, CheckIcon, InboxIcon, TrashIcon, CalendarDaysIcon, StarIcon } from '@heroicons/react/24/outline';
 import Modal from '../components/Modal';
 import GoalForm from '../components/GoalForm';
 import TaskForm from '../components/TaskForm';
@@ -39,6 +39,7 @@ const DashboardPage: React.FC = () => {
   const [completedHabitsToday, setCompletedHabitsToday] = useState<Set<string>>(new Set());
   const [brainDumpItems, setBrainDumpItems] = useState<BrainDumpItem[]>([]);
   const [upcomingMilestones, setUpcomingMilestones] = useState<Milestone[]>([]);
+  const [activeGoals, setActiveGoals] = useState<Goal[]>([]);
 
   // State for Brain Dump Input
   const [brainDumpContent, setBrainDumpContent] = useState('');
@@ -68,14 +69,15 @@ const DashboardPage: React.FC = () => {
         const [goalsRes, tasksRes, habitsRes, progressRes, brainDumpRes, milestonesRes] = await Promise.all([
           supabase
             .from('goals')
-            .select('id', { count: 'exact', head: true }) // Only count active goals
+            .select('*')
             .eq('user_id', user.id)
-            .in('status', ['pending', 'in_progress']),
+            .in('status', ['pending', 'in_progress'])
+            .order('created_at', { ascending: true }),
           supabase
             .from('tasks')
-            .select('*') // Fetch all fields for filtering due dates
+            .select('*')
             .eq('user_id', user.id)
-            .eq('completed', false), // Only pending tasks
+            .eq('completed', false),
           supabase
             .from('habits')
             .select('*')
@@ -83,17 +85,17 @@ const DashboardPage: React.FC = () => {
             .order('created_at', { ascending: true }),
           supabase
             .from('progress_events')
-            .select('habit_id') // Only need habit_id
+            .select('habit_id')
             .eq('user_id', user.id)
             .eq('event_date', today)
-            .filter('habit_id', 'not.is', null), // Ensure habit_id is not null
-          supabase // Fetch unprocessed brain dump items
+            .filter('habit_id', 'not.is', null),
+          supabase
             .from('brain_dump_items')
             .select('*')
             .eq('user_id', user.id)
             .eq('processed', false)
             .order('created_at', { ascending: true }),
-          supabase // Fetch upcoming milestones with goal title - Fetch all fields now
+          supabase
             .from('milestones')
             .select(`
               *,
@@ -101,16 +103,18 @@ const DashboardPage: React.FC = () => {
             `)
             .eq('user_id', user.id)
             .eq('completed', false)
-            .not('due_date', 'is', null) // Only those with due dates
+            .not('due_date', 'is', null)
             .order('due_date', { ascending: true })
-            .limit(5) // Limit to a reasonable number for the dashboard
+            .limit(5)
         ]);
 
         // Only update state if the component is still mounted
         if (isMounted) {
            // Process Goals Response
            if (goalsRes.error) throw goalsRes.error;
-           setActiveGoalCount(goalsRes.count ?? 0);
+           const fetchedGoals = (goalsRes.data as Goal[]) || [];
+           setActiveGoals(fetchedGoals);
+           setActiveGoalCount(fetchedGoals.length);
 
            // Process Tasks Response
            if (tasksRes.error) throw tasksRes.error;
@@ -138,7 +142,6 @@ const DashboardPage: React.FC = () => {
 
            // Process Milestones Response
            if (milestonesRes.error) throw milestonesRes.error;
-           // Ensure data matches Milestone type structure, especially the nested goals object
            setUpcomingMilestones((milestonesRes.data as Milestone[]) || []); 
         }
 
@@ -164,7 +167,7 @@ const DashboardPage: React.FC = () => {
   }
 
   if (error) {
-    return <p className="text-danger">Error: {error}</p>;
+    return <p className="text-danger dark:text-danger-light p-4">Error: {error}</p>;
   }
 
   // Filter habits that need to be done today (not already completed)
@@ -512,6 +515,40 @@ const DashboardPage: React.FC = () => {
         </div>
       </section>
 
+      {/* --- NEW: Daily Goal Review Section --- */}
+      <section>
+         <h2 className="text-2xl font-semibold text-neutral-darker dark:text-neutral-lighter mb-5 border-b border-neutral-light dark:border-neutral-dark pb-2 flex items-center">
+            <StarIcon className="h-6 w-6 mr-2 text-yellow-500" />
+            Daily Goal Review
+         </h2>
+         <div className="space-y-3">
+            {activeGoals.length > 0 ? (
+               <ul className="space-y-3">
+                  {activeGoals.map(goal => (
+                     <li key={goal.id} className="p-4 bg-white dark:bg-neutral-dark rounded-lg shadow border border-neutral-light dark:border-neutral-dark hover:shadow-md transition-shadow duration-200 flex justify-between items-center">
+                        <Link to={`/goals/${goal.id}`} className="text-lg font-medium text-primary hover:text-primary-dark dark:hover:text-primary-light flex-grow mr-4">
+                           {goal.title}
+                        </Link>
+                        <span
+                           className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${
+                              goal.status === 'in_progress' 
+                                 ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' 
+                                 : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200' // Pending or other
+                           }`}
+                        >
+                           {goal.status.replace('_', ' ')}
+                        </span>
+                     </li>
+                  ))}
+               </ul>
+            ) : (
+               <div className="p-4 bg-neutral-lighter dark:bg-neutral-dark rounded-lg border border-neutral-light dark:border-neutral-dark text-center text-neutral dark:text-neutral-light">
+                  No active goals to review. Create some goals first!
+               </div>
+            )}
+         </div>
+      </section>
+
       {/* Upcoming Milestones Section */}
       <section>
         <h2 className="text-2xl font-semibold text-neutral-darker dark:text-neutral-lighter mb-5 border-b border-neutral-light dark:border-neutral-dark pb-2">Upcoming Milestones</h2>
@@ -545,7 +582,6 @@ const DashboardPage: React.FC = () => {
                No upcoming milestones found.
             </div>
           )}
-           {/* Link to Goals page for full view? */} 
            {activeGoalCount > 0 && upcomingMilestones.length > 0 && (
                <div className="text-right mt-2">
                  <Link to="/goals" className="text-sm text-primary hover:text-primary-dark dark:hover:text-primary-light hover:underline">View All Goals & Milestones &rarr;</Link>
