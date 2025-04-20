@@ -60,4 +60,19 @@ export interface BrainDumpItem {
     updated_at: string; // timestamptz (ISO string format from DB)
 }
 
-// Add other types here as needed (Milestone, etc.) 
+// Based on the public.milestones table in the migration
+export interface Milestone {
+    id: string; // uuid
+    user_id: string; // uuid references auth.users
+    goal_id: string; // uuid references public.goals
+    title: string;
+    description?: string | null;
+    due_date?: string | null; // date, optional
+    completed: boolean;
+    created_at: string; // timestamptz
+    updated_at: string; // timestamptz
+    // Optional: Include goal title if fetched via join
+    goals?: { title: string } | null;
+}
+
+// Add other types here as needed (NotificationSetting, etc.) 

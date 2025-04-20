@@ -44,7 +44,16 @@ export default {
           dark: '#B91C1C', // red-700
           text: '#FEF2F2' // red-50
         }
-      }
+      },
+      keyframes: {
+        'modal-appear': {
+          '0%': { opacity: '0', transform: 'scale(0.95)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+      },
+      animation: {
+        'modal-appear': 'modal-appear 0.2s ease-out forwards',
+      },
     },
   },
   plugins: [],
