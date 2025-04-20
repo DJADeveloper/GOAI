@@ -17,6 +17,7 @@ import BrainDumpPage from './pages/BrainDump';
 import AnalyticsPage from './pages/Analytics';
 import SettingsPage from './pages/Settings';
 import ProfilePage from './pages/Profile';
+import CalendarPage from './pages/CalendarPage';
 
 // Import Nav components
 import Navbar from './components/Navbar';
@@ -65,6 +66,7 @@ function App() {
             <Route path="/tasks" element={isAuthenticated ? <TasksPage /> : <Navigate to="/login" />} />
             <Route path="/habits" element={isAuthenticated ? <HabitsPage /> : <Navigate to="/login" />} />
             <Route path="/brain-dump" element={isAuthenticated ? <BrainDumpPage /> : <Navigate to="/login" />} />
+            <Route path="/calendar" element={isAuthenticated ? <CalendarPage /> : <Navigate to="/login" />} />
             <Route path="/analytics" element={isAuthenticated ? <AnalyticsPage /> : <Navigate to="/login" />} />
             <Route path="/settings" element={isAuthenticated ? <SettingsPage /> : <Navigate to="/login" />} />
             <Route path="/profile" element={isAuthenticated ? <ProfilePage /> : <Navigate to="/login" />} />

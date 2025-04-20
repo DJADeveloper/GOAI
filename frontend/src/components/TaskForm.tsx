@@ -3,8 +3,12 @@ import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { Task } from '../types';
 
-// Define a simpler type for the goal dropdown
+// Define simpler types for dropdowns
 interface GoalOption {
+    id: string;
+    title: string;
+}
+interface TaskOption {
     id: string;
     title: string;
 }
@@ -13,61 +17,112 @@ interface TaskFormProps {
   initialData?: Task | null; // For editing
   onSave: (task: Task) => void; // Callback
   onCancel: () => void;
-  // TODO: Add prop to pass available goals for linking?
 }
 
 const TaskForm: React.FC<TaskFormProps> = ({ initialData, onSave, onCancel }) => {
   const { user } = useAuth();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [dueDate, setDueDate] = useState<string>(''); // YYYY-MM-DDTHH:mm format for datetime-local
-  const [selectedGoalId, setSelectedGoalId] = useState<string | ''>(''); // State for goal selection
-  const [availableGoals, setAvailableGoals] = useState<GoalOption[]>([]); // Use GoalOption type
+  const [dueDate, setDueDate] = useState<string>('');
+  const [selectedGoalId, setSelectedGoalId] = useState<string | ''>('');
+  const [availableGoals, setAvailableGoals] = useState<GoalOption[]>([]);
   const [loadingGoals, setLoadingGoals] = useState(false);
+  
+  // --- State for Dependencies ---
+  const [availableTasks, setAvailableTasks] = useState<TaskOption[]>([]);
+  const [loadingTasks, setLoadingTasks] = useState(false);
+  const [selectedBlockingTaskIds, setSelectedBlockingTaskIds] = useState<string[]>([]); // IDs of tasks this task is BLOCKED BY
+  // ------------------------------
+
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const isEditing = !!initialData;
+  const currentTaskId = initialData?.id;
 
-  // Fetch available goals for the dropdown
+  // Fetch available goals
   useEffect(() => {
     const fetchGoals = async () => {
       if (!user) return;
       setLoadingGoals(true);
       try {
-        // Fetch only id and title, and ensure data matches GoalOption[]
         const { data, error } = await supabase
           .from('goals')
           .select('id, title') 
           .eq('user_id', user.id)
           .in('status', ['pending', 'in_progress']);
-        
         if (error) throw error;
-        if (data) {
-          // Explicitly cast or ensure the fetched data matches GoalOption[]
-          setAvailableGoals(data as GoalOption[]);
-        }
-
-      } catch (err) {
-         console.error("Error fetching goals for form:", err);
-      } finally {
-         setLoadingGoals(false);
-      }
+        if (data) setAvailableGoals(data as GoalOption[]);
+      } catch (err) { console.error("Error fetching goals for form:", err); }
+      finally { setLoadingGoals(false); }
     };
     fetchGoals();
   }, [user]);
 
-  // Pre-fill form if editing
+  // Fetch available tasks for dependency selection
   useEffect(() => {
-    if (initialData) {
+    const fetchTasks = async () => {
+        if (!user) return;
+        setLoadingTasks(true);
+        try {
+            const { data, error } = await supabase
+                .from('tasks')
+                .select('id, title')
+                .eq('user_id', user.id);
+            
+            if (error) throw error;
+            // Filter out the current task if editing
+            const filteredTasks = currentTaskId ? data?.filter(task => task.id !== currentTaskId) : data;
+            setAvailableTasks((filteredTasks as TaskOption[]) || []);
+
+        } catch (err) {
+            console.error("Error fetching tasks for dependencies:", err);
+            // Handle error appropriately
+        } finally {
+            setLoadingTasks(false);
+        }
+    };
+    fetchTasks();
+  }, [user, currentTaskId]);
+
+  // Pre-fill form if editing, including fetching existing dependencies
+  useEffect(() => {
+    if (initialData && user) {
       setTitle(initialData.title || '');
       setDescription(initialData.description || '');
-      // Format timestamptz for input type="datetime-local" (YYYY-MM-DDTHH:mm)
       setDueDate(initialData.due_date ? new Date(initialData.due_date).toISOString().slice(0, 16) : '');
-      setSelectedGoalId(initialData.goal_id || ''); // Pre-fill selected goal
-    }
-  }, [initialData]);
+      setSelectedGoalId(initialData.goal_id || '');
 
+      // Fetch existing dependencies for this task (tasks it depends on / is blocked by)
+      const fetchDependencies = async () => {
+          try {
+              const { data, error } = await supabase
+                  .from('task_dependencies')
+                  .select('blocking_task_id') // Select the ID of the task that blocks this one
+                  .eq('user_id', user.id)
+                  .eq('dependent_task_id', initialData.id); // This task is the dependent one
+
+              if (error) throw error;
+              
+              const blockingIds = data ? data.map(dep => dep.blocking_task_id) : [];
+              setSelectedBlockingTaskIds(blockingIds);
+
+          } catch (err) {
+              console.error("Error fetching existing task dependencies:", err);
+              setFormError("Failed to load existing dependencies.");
+          }
+      };
+      fetchDependencies();
+    }
+  }, [initialData, user]);
+
+  // Handle change in multi-select
+  const handleDependencyChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+      const selectedIds = Array.from(event.target.selectedOptions, option => option.value);
+      setSelectedBlockingTaskIds(selectedIds);
+  };
+
+  // Handle form submission (including dependency updates)
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!user || !title.trim()) {
@@ -78,141 +133,151 @@ const TaskForm: React.FC<TaskFormProps> = ({ initialData, onSave, onCancel }) =>
     setSaving(true);
     setFormError(null);
 
+    // 1. Save the core task data
     const taskData = {
       title: title.trim(),
       description: description.trim() || null,
       user_id: user.id,
-      due_date: dueDate ? new Date(dueDate).toISOString() : null, // Convert back to ISO string for DB
-      goal_id: selectedGoalId || null, // Include selected goal_id
-      // completed status handled separately (usually toggle, not in this form)
+      due_date: dueDate ? new Date(dueDate).toISOString() : null,
+      goal_id: selectedGoalId || null,
     };
 
+    let savedTask: Task | null = null;
     try {
-      let savedTask: Task | null = null;
       if (isEditing && initialData) {
-        const { data, error } = await supabase
-          .from('tasks')
-          .update(taskData)
-          .eq('id', initialData.id)
-          .select()
-          .single();
+        const { data, error } = await supabase.from('tasks').update(taskData).eq('id', initialData.id).select().single();
         if (error) throw error;
         savedTask = data as Task;
       } else {
-        const { data, error } = await supabase
-          .from('tasks')
-          .insert({ ...taskData, completed: false }) // Default completed to false
-          .select()
-          .single();
+        const { data, error } = await supabase.from('tasks').insert({ ...taskData, completed: false }).select().single();
         if (error) throw error;
         savedTask = data as Task;
       }
-
-      if (savedTask) {
-        onSave(savedTask);
-        if (!isEditing) {
-             setTitle('');
-             setDescription('');
-             setDueDate('');
-             setSelectedGoalId(''); // Reset goal selection
-        }
-      }
-
     } catch (err: any) {
       console.error(isEditing ? "Error updating task:" : "Error creating task:", err);
       setFormError(err.message || (isEditing ? "Failed to update task." : "Failed to create task."));
-    } finally {
       setSaving(false);
+      return; // Stop if task saving fails
     }
+
+    // 2. If task save was successful, update dependencies
+    if (savedTask) {
+        try {
+            const dependentTaskId = savedTask.id;
+            let existingBlockingIds: string[] = [];
+
+            // Fetch current dependencies again to be safe (or use state if confident)
+            const { data: currentDeps, error: fetchErr } = await supabase
+                .from('task_dependencies')
+                .select('blocking_task_id')
+                .eq('user_id', user.id)
+                .eq('dependent_task_id', dependentTaskId);
+            
+            if (fetchErr) throw fetchErr;
+            existingBlockingIds = currentDeps ? currentDeps.map(d => d.blocking_task_id) : [];
+
+            // Determine dependencies to add and remove
+            const idsToAdd = selectedBlockingTaskIds.filter(id => !existingBlockingIds.includes(id));
+            const idsToRemove = existingBlockingIds.filter(id => !selectedBlockingTaskIds.includes(id));
+
+            // Add new dependencies
+            if (idsToAdd.length > 0) {
+                const rowsToAdd = idsToAdd.map(blockingId => ({ 
+                    user_id: user.id, 
+                    blocking_task_id: blockingId, 
+                    dependent_task_id: dependentTaskId 
+                }));
+                const { error: insertError } = await supabase.from('task_dependencies').insert(rowsToAdd);
+                if (insertError) throw insertError;
+            }
+
+            // Remove old dependencies
+            if (idsToRemove.length > 0) {
+                const { error: deleteError } = await supabase
+                    .from('task_dependencies')
+                    .delete()
+                    .eq('user_id', user.id)
+                    .eq('dependent_task_id', dependentTaskId)
+                    .in('blocking_task_id', idsToRemove);
+                if (deleteError) throw deleteError;
+            }
+
+            // If everything succeeded
+            onSave(savedTask);
+            if (!isEditing) {
+                setTitle(''); setDescription(''); setDueDate(''); setSelectedGoalId('');
+                setSelectedBlockingTaskIds([]); // Reset dependencies
+            }
+
+        } catch (depError: any) {
+            console.error("Error updating task dependencies:", depError);
+            setFormError(`Task saved, but failed to update dependencies: ${depError.message}`);
+            // Still call onSave, but with a warning in the form?
+            onSave(savedTask); 
+        }
+    }
+
+    setSaving(false);
   };
 
   return (
-    // Themed form container
     <div className="p-4 mb-6 bg-white dark:bg-neutral-dark rounded-lg shadow border border-neutral-light dark:border-neutral-dark">
-      {/* Themed title */}
       <h2 className="text-xl font-semibold mb-4 text-neutral-darker dark:text-white">{isEditing ? 'Edit Task' : 'Create New Task'}</h2>
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Title */}
         <div>
-          {/* Themed label */}
           <label htmlFor="task-title" className="block text-sm font-medium text-neutral-dark dark:text-neutral-light">Title <span className="text-danger">*</span></label>
-          {/* Themed input */}
-          <input
-            id="task-title"
-            type="text"
-            required
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full px-3 py-2 mt-1 border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm bg-white dark:bg-neutral-darker focus:outline-none focus:ring-primary dark:focus:ring-primary-light focus:border-primary dark:focus:border-primary-light text-neutral-darker dark:text-white"
-          />
+          <input id="task-title" type="text" required value={title} onChange={(e) => setTitle(e.target.value)} className="w-full px-3 py-2 mt-1 border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm bg-white dark:bg-neutral-darker focus:outline-none focus:ring-primary dark:focus:ring-primary-light focus:border-primary dark:focus:border-primary-light text-neutral-darker dark:text-white" />
         </div>
-        {/* Description */}
         <div>
-          {/* Themed label */}
           <label htmlFor="task-description" className="block text-sm font-medium text-neutral-dark dark:text-neutral-light">Description</label>
-          {/* Themed textarea */}
-          <textarea
-            id="task-description"
-            rows={3}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="w-full px-3 py-2 mt-1 border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm bg-white dark:bg-neutral-darker focus:outline-none focus:ring-primary dark:focus:ring-primary-light focus:border-primary dark:focus:border-primary-light text-neutral-darker dark:text-white"
-          />
+          <textarea id="task-description" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} className="w-full px-3 py-2 mt-1 border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm bg-white dark:bg-neutral-darker focus:outline-none focus:ring-primary dark:focus:ring-primary-light focus:border-primary dark:focus:border-primary-light text-neutral-darker dark:text-white" />
         </div>
-        {/* Due Date */}
         <div>
-            {/* Themed label */}
             <label htmlFor="task-due-date" className="block text-sm font-medium text-neutral-dark dark:text-neutral-light">Due Date/Time</label>
-            {/* Themed input */}
-            <input 
-               id="task-due-date"
-               type="datetime-local" // Use datetime-local for timestamptz
-               value={dueDate}
-               onChange={(e) => setDueDate(e.target.value)}
-               className="w-full px-3 py-2 mt-1 border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm bg-white dark:bg-neutral-darker focus:outline-none focus:ring-primary dark:focus:ring-primary-light focus:border-primary dark:focus:border-primary-light text-neutral-darker dark:text-white"
-            />
+            <input id="task-due-date" type="datetime-local" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className="w-full px-3 py-2 mt-1 border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm bg-white dark:bg-neutral-darker focus:outline-none focus:ring-primary dark:focus:ring-primary-light focus:border-primary dark:focus:border-primary-light text-neutral-darker dark:text-white" />
          </div>
-        {/* Goal Selection Dropdown */}
         <div>
-            {/* Themed label */}
             <label htmlFor="task-goal" className="block text-sm font-medium text-neutral-dark dark:text-neutral-light">Link to Goal (Optional)</label>
-            {/* Themed select */}
-            <select 
-               id="task-goal"
-               value={selectedGoalId}
-               onChange={(e) => setSelectedGoalId(e.target.value)}
-               disabled={loadingGoals}
-               className="w-full px-3 py-2 mt-1 border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm bg-white dark:bg-neutral-darker focus:outline-none focus:ring-primary dark:focus:ring-primary-light focus:border-primary dark:focus:border-primary-light text-neutral-darker dark:text-white appearance-none disabled:opacity-50 dark:disabled:opacity-60"
-            >
+            <select id="task-goal" value={selectedGoalId} onChange={(e) => setSelectedGoalId(e.target.value)} disabled={loadingGoals} className="w-full px-3 py-2 mt-1 border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm bg-white dark:bg-neutral-darker focus:outline-none focus:ring-primary dark:focus:ring-primary-light focus:border-primary dark:focus:border-primary-light text-neutral-darker dark:text-white appearance-none disabled:opacity-50 dark:disabled:opacity-60">
                 <option value="">-- No Goal --</option>
-                {loadingGoals ? (
-                   <option disabled>Loading goals...</option>
-                ) : (
-                   availableGoals.map(goal => (
-                      <option key={goal.id} value={goal.id}>{goal.title}</option>
-                   ))
-                )}
+                {loadingGoals ? <option disabled>Loading goals...</option> : availableGoals.map(goal => (<option key={goal.id} value={goal.id}>{goal.title}</option>))}
             </select>
         </div>
 
-        {/* Themed error */}
+        {/* --- Dependency Selection --- */}
+        <div>
+            <label htmlFor="task-dependencies" className="block text-sm font-medium text-neutral-dark dark:text-neutral-light">Blocked By (Select Tasks)</label>
+            <select 
+               id="task-dependencies"
+               multiple // Enable multi-select
+               value={selectedBlockingTaskIds} // Controlled component
+               onChange={handleDependencyChange}
+               disabled={loadingTasks}
+               className="w-full px-3 py-2 mt-1 border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm bg-white dark:bg-neutral-darker focus:outline-none focus:ring-primary dark:focus:ring-primary-light focus:border-primary dark:focus:border-primary-light text-neutral-darker dark:text-white disabled:opacity-50 dark:disabled:opacity-60 h-32" // Give it some height
+            >
+                {loadingTasks ? (
+                   <option disabled>Loading tasks...</option>
+                ) : availableTasks.length === 0 ? (
+                    <option disabled>No other tasks available</option>
+                ) : (
+                   availableTasks.map(task => (
+                      // Filter out the current task if editing (should be handled by fetch, but belt-and-suspenders)
+                      task.id !== currentTaskId && (
+                          <option key={task.id} value={task.id}>{task.title}</option>
+                      )
+                   ))
+                )}
+            </select>
+             <p className="mt-1 text-xs text-neutral dark:text-neutral-light">Select tasks that must be completed *before* this one. (Hold Cmd/Ctrl to select multiple)</p>
+        </div>
+        {/* -------------------------- */}
+
         {formError && <p className="text-sm text-danger dark:text-danger-light">{formError}</p>}
-        {/* Buttons */}
         <div className="flex justify-end space-x-3 pt-2">
-          {/* Themed Cancel button */}
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-4 py-2 text-sm font-medium text-neutral-dark dark:text-neutral-light bg-white dark:bg-neutral-dark border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm hover:bg-neutral-lighter dark:hover:bg-neutral-darker focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-neutral-dark focus:ring-primary-light"
-          >
+          <button type="button" onClick={onCancel} className="px-4 py-2 text-sm font-medium text-neutral-dark dark:text-neutral-light bg-white dark:bg-neutral-dark border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm hover:bg-neutral-lighter dark:hover:bg-neutral-darker focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-neutral-dark focus:ring-primary-light">
             Cancel
           </button>
-          {/* Themed Save button */}
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 text-sm font-medium text-white bg-primary border border-transparent rounded-md shadow-sm hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-neutral-dark focus:ring-primary disabled:opacity-50"
-          >
+          <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-medium text-white bg-primary border border-transparent rounded-md shadow-sm hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-neutral-dark focus:ring-primary disabled:opacity-50">
             {saving ? 'Saving...' : (isEditing ? 'Update Task' : 'Save Task')}
           </button>
         </div>

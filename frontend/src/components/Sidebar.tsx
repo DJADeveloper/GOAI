@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext'; // Import useAuth hook
-import { HomeIcon, CheckBadgeIcon, ListBulletIcon, SparklesIcon, InboxStackIcon, ChartBarIcon, CogIcon, UserCircleIcon } from '@heroicons/react/24/outline' // Import icons
+import { HomeIcon, CheckBadgeIcon, ListBulletIcon, SparklesIcon, InboxStackIcon, ChartBarIcon, CogIcon, UserCircleIcon, CalendarDaysIcon } from '@heroicons/react/24/outline' // Import icons
 
 const Sidebar: React.FC = () => {
   const { session } = useAuth(); // Use the Auth context
@@ -24,6 +24,7 @@ const Sidebar: React.FC = () => {
           <li><Link to="/goals" className={linkClasses}><CheckBadgeIcon className={iconClasses} /><span>Goals</span></Link></li>
           <li><Link to="/tasks" className={linkClasses}><ListBulletIcon className={iconClasses} /><span>Tasks</span></Link></li>
           <li><Link to="/habits" className={linkClasses}><SparklesIcon className={iconClasses} /><span>Habits</span></Link></li>
+          <li><Link to="/calendar" className={linkClasses}><CalendarDaysIcon className={iconClasses} /><span>Calendar</span></Link></li>
           <li><Link to="/brain-dump" className={linkClasses}><InboxStackIcon className={iconClasses} /><span>Brain Dump</span></Link></li>
           <li><Link to="/analytics" className={linkClasses}><ChartBarIcon className={iconClasses} /><span>Analytics</span></Link></li>
           <li><Link to="/settings" className={linkClasses}><CogIcon className={iconClasses} /><span>Settings</span></Link></li>

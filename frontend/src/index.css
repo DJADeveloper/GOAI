@@ -1,3 +1,13 @@
 @tailwind base;
 @tailwind components;
-@tailwind utilities; 
+@tailwind utilities;
+
+/* Custom overrides for react-big-calendar dark mode */
+.dark .rbc-off-range-bg {
+  @apply bg-neutral-darker opacity-75; /* Use a darker background for off-range days */
+}
+
+/* Optional: Adjust text color of off-range dates if needed */
+.dark .rbc-off-range .rbc-date-cell .rbc-date-content {
+   /* @apply text-neutral-light opacity-60; */ /* Uncomment and adjust if text needs styling */
+} 
