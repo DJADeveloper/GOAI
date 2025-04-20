@@ -1,56 +1,110 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
-import { Goal } from '../types';
-import GoalForm from '../components/GoalForm'; // Import the new form component
+import { Goal, Milestone } from '../types';
+import GoalForm from '../components/GoalForm';
 import { Link } from 'react-router-dom';
 import { PencilSquareIcon, TrashIcon, EyeIcon, PlusIcon, XMarkIcon } from '@heroicons/react/24/outline';
 
+// --- Add interface for Goal with Progress ---
+interface GoalWithProgress extends Goal {
+  progressPercent: number;
+}
+// ------------------------------------------
+
+// --- Add simpler type for Milestone data needed for progress ---
+interface MilestoneProgressInfo {
+  id: string;
+  goal_id: string | null; // goal_id can be null in the type, though we filter
+  completed: boolean;
+}
+// -----------------------------------------------------------
+
 const GoalsPage: React.FC = () => {
   const { user } = useAuth();
-  const [goals, setGoals] = useState<Goal[]>([]);
+  // Use the extended type for state
+  const [goals, setGoals] = useState<GoalWithProgress[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [editingGoal, setEditingGoal] = useState<Goal | null>(null); // Track which goal is being edited
+  const [editingGoal, setEditingGoal] = useState<GoalWithProgress | null>(null); // Also use extended type here
 
-  // Fetch goals on load
+  // Fetch goals AND milestones on load
   useEffect(() => {
-    const fetchGoals = async () => {
+    const fetchGoalsAndMilestones = async () => {
       if (!user) {
         setLoading(false);
-        setError("User not logged in."); // Changed error message slightly
+        setError("User not logged in.");
         return;
       }
       try {
         setLoading(true);
         setError(null);
-        const { data, error: fetchError } = await supabase
-          .from('goals')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-        if (fetchError) throw fetchError;
-        if (data) setGoals(data);
+
+        // Fetch goals and milestones concurrently
+        const [goalsRes, milestonesRes] = await Promise.all([
+          supabase
+            .from('goals')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false }),
+          supabase 
+            .from('milestones')
+            .select('id, goal_id, completed') // Fetch only necessary fields
+            .eq('user_id', user.id)
+        ]);
+
+        if (goalsRes.error) throw goalsRes.error;
+        if (milestonesRes.error) throw milestonesRes.error; 
+
+        const fetchedGoals = goalsRes.data || [];
+        // Use the simpler type for fetched milestone data
+        const fetchedMilestones: MilestoneProgressInfo[] = (milestonesRes.data || []) as MilestoneProgressInfo[]; 
+
+        // Group milestones by goal_id - Use the simpler type for the map value
+        const milestonesByGoal = new Map<string, MilestoneProgressInfo[]>();
+        fetchedMilestones.forEach(m => {
+            if(m.goal_id) { // Ensure goal_id is not null before using it as key
+                const list = milestonesByGoal.get(m.goal_id) || [];
+                list.push(m); // Push the MilestoneProgressInfo object
+                milestonesByGoal.set(m.goal_id, list);
+            }
+        });
+
+        // Calculate progress for each goal
+        const goalsWithProgress: GoalWithProgress[] = fetchedGoals.map(goal => {
+            const goalMilestones = milestonesByGoal.get(goal.id) || [];
+            const totalMilestones = goalMilestones.length;
+            const completedMilestones = goalMilestones.filter(m => m.completed).length;
+            const progressPercent = totalMilestones > 0 ? Math.round((completedMilestones / totalMilestones) * 100) : 0;
+            return { ...goal, progressPercent }; 
+        });
+
+        setGoals(goalsWithProgress); // Set state with calculated progress
+
       } catch (err: any) {
-        console.error("Error fetching goals:", err);
-        setError(err.message || "Failed to fetch goals.");
+        console.error("Error fetching goals/milestones:", err);
+        setError(err.message || "Failed to fetch data.");
       } finally {
         setLoading(false);
       }
     };
-    fetchGoals();
+    fetchGoalsAndMilestones();
   }, [user]);
 
   // Handle saving (Create or Update)
   const handleSaveGoal = (savedGoal: Goal) => {
+    // When saving, newly created goals won't have progress calculated yet
+    // We could refetch, or just initialize progress to 0
+    const goalWithProgress: GoalWithProgress = { ...savedGoal, progressPercent: editingGoal?.progressPercent ?? 0 };
+
     if (editingGoal) {
       // Update existing goal in state
-      setGoals(goals.map(g => g.id === savedGoal.id ? savedGoal : g));
+      setGoals(goals.map(g => g.id === goalWithProgress.id ? goalWithProgress : g));
       setEditingGoal(null); // Exit editing mode
     } else {
       // Add new goal to state
-      setGoals([savedGoal, ...goals]);
+      setGoals([goalWithProgress, ...goals]);
       setShowCreateForm(false); // Hide create form
     }
   };
@@ -85,7 +139,7 @@ const GoalsPage: React.FC = () => {
     setEditingGoal(null);
   };
 
-  // Determine if the form (either create or edit) should be shown
+  // Determine if the form should be shown
   const isFormVisible = showCreateForm || !!editingGoal;
 
   return (
@@ -131,26 +185,43 @@ const GoalsPage: React.FC = () => {
       {loading && <p className="text-neutral dark:text-neutral-light">Loading goals...</p>}
       {error && <p className="text-danger dark:text-danger-light">Error: {error}</p>}
       
-      {/* Goal List */}
+      {/* Goal List - Update rendering */}
       {!loading && !error && (
         <div className="space-y-4">
           {goals.length === 0 && !isFormVisible ? (
-            // Themed empty state
             <p className="text-neutral dark:text-neutral-light text-center py-4">You haven't created any goals yet. Click '+ New Goal' to start!</p>
           ) : (
             goals.map((goal) => (
-              // Don't render the goal being edited in the list
               goal.id === editingGoal?.id ? null : (
-                // Themed card styling
                 <div key={goal.id} className="p-4 bg-white dark:bg-neutral-dark rounded-lg shadow border border-neutral-light dark:border-neutral-dark">
+                  {/* Goal Title */}
                   <h2 className="text-xl font-semibold mb-2 text-neutral-darker dark:text-white">{goal.title}</h2>
+                  
+                  {/* --- Progress Bar --- */}
+                  <div className="mb-3">
+                     <div className="flex justify-between text-xs text-neutral dark:text-neutral-light mb-1">
+                        <span>Progress</span>
+                        <span>{goal.progressPercent}%</span>
+                     </div>
+                     <div className="w-full bg-neutral-light dark:bg-neutral-darker rounded-full h-2">
+                        <div 
+                           className="bg-primary h-2 rounded-full transition-all duration-500 ease-out" 
+                           style={{ width: `${goal.progressPercent}%` }}
+                        ></div>
+                     </div>
+                  </div>
+                  {/* ------------------ */}
+
+                  {/* Optional Description */}
                   {goal.description && <p className="text-neutral dark:text-neutral-light mb-3 whitespace-pre-wrap">{goal.description}</p>}
+                  
+                  {/* Footer with Status, Due Date, Actions */}
                   <div className="flex justify-between items-center text-sm text-neutral dark:text-neutral-light border-t border-neutral-light dark:border-neutral-dark pt-3">
-                      <div className="flex items-center space-x-4"> {/* Group status and due date */}
+                      <div className="flex items-center space-x-4">
                         <span>Status: <span className="font-medium capitalize">{goal.status.replace('_', ' ')}</span></span>
                         {goal.due_date && <span className="ml-4">Due: {new Date(goal.due_date).toLocaleDateString()}</span>}
                       </div>
-                      <div className="space-x-3 flex items-center"> {/* Group buttons */}
+                      <div className="space-x-3 flex items-center">
                           <Link 
                              to={`/goals/${goal.id}`}
                              title="View Details"

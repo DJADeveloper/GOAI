@@ -4,7 +4,9 @@ import { supabase } from '../lib/supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { Goal, Task, Milestone } from '../types'; // Assuming Goal and Task types are defined
 import MilestoneForm from '../components/MilestoneForm';
+import Modal from '../components/Modal'; // <-- Import Modal component
 import { ArrowLeftIcon, PlusIcon, PencilSquareIcon, TrashIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { LinkIcon } from '@heroicons/react/24/solid'; // Import LinkIcon
 
 // Utility function to format date strings
 // Handles potential null/undefined values and ensures valid date input
@@ -38,6 +40,14 @@ const GoalDetailPage: React.FC = () => {
   // State for Milestone Form
   const [showMilestoneForm, setShowMilestoneForm] = useState(false);
   const [editingMilestone, setEditingMilestone] = useState<Milestone | null>(null);
+
+  // --- State for Link Task Modal ---
+  const [isLinkTaskModalOpen, setIsLinkTaskModalOpen] = useState(false);
+  const [linkableTasks, setLinkableTasks] = useState<Task[]>([]);
+  const [loadingLinkableTasks, setLoadingLinkableTasks] = useState(false);
+  const [linkingTask, setLinkingTask] = useState<string | null>(null); // Track which task ID is being linked
+  const [linkTaskError, setLinkTaskError] = useState<string | null>(null);
+  // ---------------------------------
 
   useEffect(() => {
     const fetchGoalDetails = async () => { // <-- Renamed function
@@ -106,6 +116,79 @@ const GoalDetailPage: React.FC = () => {
     fetchGoalDetails();
   }, [goalId, user]);
 
+  // --- Fetch Linkable Tasks (when modal opens) ---
+  const fetchLinkableTasks = async () => {
+    if (!user) return;
+    setLoadingLinkableTasks(true);
+    setLinkableTasks([]); // Clear previous results
+    setLinkTaskError(null);
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('user_id', user.id)
+        .is('goal_id', null) // Only tasks not linked to ANY goal
+        .order('created_at', { ascending: false });
+      
+      if (fetchError) throw fetchError;
+      setLinkableTasks(data || []);
+
+    } catch (err: any) {
+      console.error("Error fetching linkable tasks:", err);
+      setLinkTaskError("Failed to load tasks available for linking.");
+    } finally {
+      setLoadingLinkableTasks(false);
+    }
+  };
+
+  // --- Open Link Task Modal Handler ---
+  const handleOpenLinkTaskModal = () => {
+    setIsLinkTaskModalOpen(true);
+    fetchLinkableTasks(); // Fetch tasks when modal opens
+  };
+
+  // --- Close Link Task Modal Handler ---
+  const handleCloseLinkTaskModal = () => {
+    setIsLinkTaskModalOpen(false);
+    setLinkableTasks([]); // Clear the list
+    setLinkTaskError(null);
+    setLinkingTask(null);
+  };
+
+  // --- Link Task Handler ---
+  const handleLinkTask = async (taskIdToLink: string) => {
+    if (!user || !goalId) return;
+    setLinkingTask(taskIdToLink); // Indicate linking is in progress for this task
+    setLinkTaskError(null);
+    try {
+      const { error: updateError } = await supabase
+        .from('tasks')
+        .update({ goal_id: goalId, updated_at: new Date().toISOString() })
+        .eq('id', taskIdToLink)
+        .eq('user_id', user.id);
+
+      if (updateError) throw updateError;
+
+      // Success!
+      // 1. Remove task from linkable list in the modal
+      setLinkableTasks(prev => prev.filter(task => task.id !== taskIdToLink));
+      // 2. Add task to the main list displayed on the page (optimistic update)
+      const linkedTask = linkableTasks.find(task => task.id === taskIdToLink);
+      if (linkedTask) {
+          setTasks(prev => [...prev, { ...linkedTask, goal_id: goalId }]);
+      }
+      // Optional: Show a success message or refetch goal details entirely
+      // For now, the optimistic updates should suffice.
+      console.log(`Task ${taskIdToLink} successfully linked to goal ${goalId}`); // Log success
+
+    } catch (err: any) {
+      console.error("Error linking task:", err);
+      setLinkTaskError(`Failed to link task: ${err.message}`);
+    } finally {
+      setLinkingTask(null); // Reset linking status
+    }
+  };
+
   // --- Milestone CRUD Handlers ---
 
   const handleSaveMilestone = (savedMilestone: Milestone) => {
@@ -117,6 +200,7 @@ const GoalDetailPage: React.FC = () => {
       setMilestones([...milestones, savedMilestone]);
     }
     handleCancelMilestoneForm(); // Close form after save
+    console.log(editingMilestone ? "Milestone updated:" : "Milestone created:", savedMilestone.id); // Log success
   };
 
   const handleDeleteMilestone = async (milestoneId: string) => {
@@ -132,6 +216,7 @@ const GoalDetailPage: React.FC = () => {
 
       // Remove milestone from state
       setMilestones(milestones.filter(m => m.id !== milestoneId));
+      console.log("Milestone deleted:", milestoneId); // Log success
 
     } catch (err: any) {
       console.error("Error deleting milestone:", err);
@@ -154,6 +239,7 @@ const GoalDetailPage: React.FC = () => {
       if (data) {
         // Update the milestone in the local state
         setMilestones(milestones.map(m => m.id === data.id ? data : m));
+        console.log(`Milestone ${data.id} completion toggled to ${data.completed}`); // Log success
       }
     } catch (err: any) {
       console.error("Error toggling milestone completion:", err);
@@ -212,7 +298,17 @@ const GoalDetailPage: React.FC = () => {
 
       {/* Section for associated Tasks */}
       <div className="border-t border-neutral-light dark:border-neutral-dark pt-6 mt-6">
-        <h2 className="text-xl font-semibold mb-4 text-neutral-darker dark:text-white">Associated Tasks</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold text-neutral-darker dark:text-white">Associated Tasks</h2>
+          <button 
+            onClick={handleOpenLinkTaskModal}
+            className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-neutral-darker bg-secondary text-white hover:bg-secondary-dark focus:ring-secondary"
+            title="Link an existing task to this goal"
+          >
+            <LinkIcon className="-ml-0.5 mr-1.5 h-4 w-4" />
+            Link Task
+          </button>
+        </div>
         {tasks.length > 0 ? (
           <ul className="space-y-3">
             {tasks.map((task) => (
@@ -331,6 +427,54 @@ const GoalDetailPage: React.FC = () => {
           !isMilestoneFormVisible && <p className="text-neutral dark:text-neutral-light text-center py-3">No milestones added yet for this goal.</p>
         )}
       </div>
+
+      {/* --- Link Task Modal --- */}
+      <Modal 
+         isOpen={isLinkTaskModalOpen} 
+         onClose={handleCloseLinkTaskModal} 
+         title="Link Existing Task to Goal"
+      >
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2"> {/* Add max height and scroll */} 
+            {loadingLinkableTasks && <p className="text-neutral dark:text-neutral-light">Loading available tasks...</p>}
+            {linkTaskError && <p className="text-danger dark:text-danger-light">Error: {linkTaskError}</p>}
+            
+            {!loadingLinkableTasks && !linkTaskError && linkableTasks.length === 0 && (
+               <p className="text-neutral dark:text-neutral-light text-center py-4">No unassigned tasks available to link.</p>
+            )}
+
+            {!loadingLinkableTasks && !linkTaskError && linkableTasks.length > 0 && (
+               <ul className="space-y-2">
+                  {linkableTasks.map(task => (
+                     <li key={task.id} className="p-3 bg-neutral-lightest dark:bg-neutral-dark rounded-md shadow-sm flex justify-between items-center">
+                        <div>
+                           <span className="font-medium text-neutral-darker dark:text-white">{task.title}</span>
+                           {task.description && <p className="text-sm text-neutral dark:text-neutral-light mt-0.5">{task.description}</p>}
+                           {/* Optionally show task due date etc. */} 
+                        </div>
+                        <button
+                           onClick={() => handleLinkTask(task.id)}
+                           disabled={linkingTask === task.id} // Disable button while this specific task is linking
+                           className="ml-4 inline-flex items-center px-2.5 py-1 text-xs font-medium rounded shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-neutral-dark bg-primary text-white hover:bg-primary-dark focus:ring-primary disabled:opacity-50"
+                        >
+                           {linkingTask === task.id ? 'Linking...' : 'Link'}
+                        </button>
+                     </li>
+                  ))}
+               </ul>
+            )}
+
+            <div className="pt-4 border-t border-neutral-light dark:border-neutral-dark flex justify-end">
+               <button 
+                  type="button" 
+                  onClick={handleCloseLinkTaskModal}
+                  className="px-4 py-2 text-sm font-medium text-neutral-dark dark:text-neutral-light bg-white dark:bg-neutral-dark border border-neutral-light dark:border-neutral-dark rounded-md shadow-sm hover:bg-neutral-lighter dark:hover:bg-neutral-darker focus:outline-none focus:ring-2 focus:ring-offset-2 dark:focus:ring-offset-neutral-dark focus:ring-primary-light"
+               >
+                  Close
+               </button>
+            </div>
+        </div>
+      </Modal>
+      {/* ----------------------- */}
 
     </div>
   );

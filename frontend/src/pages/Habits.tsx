@@ -255,6 +255,7 @@ const HabitsPage: React.FC = () => {
       setTodaysProgressMap(prev => new Map(prev).set(savedHabit.id, false));
       setShowCreateForm(false);
     }
+    console.log(editingHabit ? "Habit updated:" : "Habit created:", savedHabit.id); // Log success
   };
 
   const handleDeleteHabit = async (habitId: string) => {
@@ -270,6 +271,7 @@ const HabitsPage: React.FC = () => {
       setLongestStreaks(prev => { const map = new Map(prev); map.delete(habitId); return map; }); // Remove from new maps
       setTotalCompletions(prev => { const map = new Map(prev); map.delete(habitId); return map; }); // Remove from new maps
       setTodaysProgressMap(prev => { const map = new Map(prev); map.delete(habitId); return map; });
+      console.log("Habit deleted:", habitId); // Log success
 
     } catch (err: any) {
       console.error("Error deleting habit:", err);
@@ -305,6 +307,7 @@ const HabitsPage: React.FC = () => {
             updatedProgressForHabit = (allProgress.get(habitId) || []).filter(e => e.id !== eventToDelete.id);
             setAllProgress(prev => new Map(prev).set(habitId, updatedProgressForHabit));
             setTodaysProgressMap(prev => new Map(prev).set(habitId, false));
+            console.log("Habit un-tracked (today):", habitId); // Log success
 
         } else {
             // --- Create a new progress event for today ---
@@ -323,6 +326,7 @@ const HabitsPage: React.FC = () => {
                 updatedProgressForHabit = [newProgressEvent, ...(allProgress.get(habitId) || [])];
                 setAllProgress(prev => new Map(prev).set(habitId, updatedProgressForHabit));
                 setTodaysProgressMap(prev => new Map(prev).set(habitId, true));
+                console.log("Habit tracked (today):", habitId); // Log success
             }
         }
         
@@ -334,6 +338,11 @@ const HabitsPage: React.FC = () => {
         setHabitStreaks(prev => new Map(prev).set(habitId, newCurrentStreak));
         setLongestStreaks(prev => new Map(prev).set(habitId, newLongestStreak));
         setTotalCompletions(prev => new Map(prev).set(habitId, newTotalCompletions));
+
+        // Log un-tracking success here if needed
+        if (wasCompletedToday) {
+             console.log("Habit un-tracked (today):", habitId); // Log success
+        }
 
     } catch (err: any) {
         console.error("Error tracking habit:", err);

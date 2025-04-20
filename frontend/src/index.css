@@ -7,6 +7,12 @@
   @apply bg-neutral-darker opacity-75; /* Use a darker background for off-range days */
 }
 
+/* Style background of the current day cell */
+.dark .rbc-today {
+   @apply bg-primary/10; /* Example: Use a subtle primary background tint */
+   /* Alternatively, use a slightly lighter neutral: @apply bg-neutral-dark/70; */ 
+}
+
 /* Optional: Adjust text color of off-range dates if needed */
 .dark .rbc-off-range .rbc-date-cell .rbc-date-content {
    /* @apply text-neutral-light opacity-60; */ /* Uncomment and adjust if text needs styling */

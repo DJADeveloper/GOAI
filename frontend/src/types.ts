@@ -56,6 +56,7 @@ export interface BrainDumpItem {
     user_id: string; // uuid references auth.users
     content: string; // text
     processed: boolean; // boolean
+    tags?: string[] | null; // <-- Add optional tags array
     created_at: string; // timestamptz (ISO string format from DB)
     updated_at: string; // timestamptz (ISO string format from DB)
 }

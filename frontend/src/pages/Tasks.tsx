@@ -177,7 +177,7 @@ const TasksPage: React.FC = () => {
          setShowCreateForm(false);
      }
      // Recommend a refetch function call here in a real implementation
-     alert("Task saved. Refresh page to see updated dependency status."); // Temp feedback
+     console.log("Task saved (optimistic update):", taskWithGoal.id); // Add console log
   };
 
   // Handle toggling completion status (prevent if blocked)
@@ -203,7 +203,7 @@ const TasksPage: React.FC = () => {
         // TODO: Refetch needed here to update dependency statuses of OTHER tasks
         // Simple update for now:
         setTasks(tasks.map(t => t.id === data.id ? { ...t, completed: data.completed } : t));
-        alert("Task status updated. Refresh page to see updated dependency statuses."); // Temp feedback
+        console.log("Task completion toggled (optimistic update):", data.id); // Add console log
       }
     } catch (err: any) {
       console.error("Error toggling task completion:", err);
@@ -220,7 +220,7 @@ const TasksPage: React.FC = () => {
       if (deleteError) throw deleteError;
       setTasks(tasks.filter(t => t.id !== taskId));
       // TODO: Refetch needed here to update dependencies
-      alert("Task deleted. Refresh page to see updated dependency statuses."); // Temp feedback
+      console.log("Task deleted (optimistic update):", taskId); // Add console log
     } catch (err: any) {
       console.error("Error deleting task:", err);
       setError(err.message || "Failed to delete task.");
@@ -339,7 +339,7 @@ const TasksPage: React.FC = () => {
                         )}
                      </div>
                   </div>
-                  {/* Action Buttons - Themed */} 
+                  {/* Action Buttons - Themed */ 
                   <div className="flex-shrink-0 space-x-2 flex items-center">
                       <button 
                          onClick={() => setEditingTask(task)} 
